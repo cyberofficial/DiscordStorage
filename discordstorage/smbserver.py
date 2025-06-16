@@ -591,45 +591,126 @@ class DiscordSMBServer:
         
         print("🛑 Stopping SMB server...")
         self.running = False
-        
         if self.server_thread:
             self.server_thread.join(timeout=5)
         
         print("✅ SMB server stopped")
     
     def _run_smb_server(self):
-        """Run the SMB server using a simplified HTTP-based file server"""
+        """Run the SMB server using WebDAV protocol for Windows network mapping"""
         try:
-            # For now, let's implement a simple HTTP file server that can be mapped as a network drive
-            # This is a workaround since implementing a full SMB server is complex
+            print(f"🎧 Starting WebDAV server on {self.host}:{self.port}")
+            print("💡 This provides WebDAV protocol for Windows network mapping")
             
-            print(f"🎧 Starting HTTP-based file server on {self.host}:{self.port}")
-            print("💡 This provides WebDAV-like functionality for network access")
-            
-            # Create a simple HTTP server for file operations
+            # Create a WebDAV-compatible HTTP server
             from http.server import HTTPServer, BaseHTTPRequestHandler
             import urllib.parse
+            import xml.etree.ElementTree as ET
+            from datetime import datetime
             
             filesystem = self.filesystem  # Store reference for the handler
             
-            class DiscordFileHandler(BaseHTTPRequestHandler):
+            class WebDAVHandler(BaseHTTPRequestHandler):
+                def do_OPTIONS(self):
+                    """Handle OPTIONS request - required for WebDAV"""
+                    self.send_response(200)
+                    self.send_header('DAV', '1,2')
+                    self.send_header('MS-Author-Via', 'DAV')
+                    self.send_header('Allow', 'OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE, COPY, MOVE, MKCOL, PROPFIND, PROPPATCH, LOCK, UNLOCK')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                
+                def do_PROPFIND(self):
+                    """Handle PROPFIND request - WebDAV directory listing"""
+                    try:
+                        path = urllib.parse.unquote(self.path)
+                        depth = self.headers.get('Depth', '1')
+                        
+                        # Create WebDAV XML response
+                        multistatus = ET.Element('multistatus')
+                        multistatus.set('xmlns', 'DAV:')
+                        
+                        if path == '/' or path == '':
+                            # Root directory
+                            response = ET.SubElement(multistatus, 'response')
+                            href = ET.SubElement(response, 'href')
+                            href.text = '/'
+                            
+                            propstat = ET.SubElement(response, 'propstat')
+                            prop = ET.SubElement(propstat, 'prop')
+                            
+                            # Directory properties
+                            resourcetype = ET.SubElement(prop, 'resourcetype')
+                            ET.SubElement(resourcetype, 'collection')
+                            
+                            displayname = ET.SubElement(prop, 'displayname')
+                            displayname.text = 'DiscordStorage'
+                            
+                            getlastmodified = ET.SubElement(prop, 'getlastmodified')
+                            getlastmodified.text = datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT')
+                            
+                            status = ET.SubElement(propstat, 'status')
+                            status.text = 'HTTP/1.1 200 OK'
+                            
+                            # Add files if depth allows
+                            if depth != '0':
+                                files = filesystem.list_files()
+                                for file_info in files:
+                                    file_response = ET.SubElement(multistatus, 'response')
+                                    file_href = ET.SubElement(file_response, 'href')
+                                    file_href.text = f"/{file_info['name']}"
+                                    
+                                    file_propstat = ET.SubElement(file_response, 'propstat')
+                                    file_prop = ET.SubElement(file_propstat, 'prop')
+                                    
+                                    file_displayname = ET.SubElement(file_prop, 'displayname')
+                                    file_displayname.text = file_info['name']
+                                    
+                                    file_getcontentlength = ET.SubElement(file_prop, 'getcontentlength')
+                                    file_getcontentlength.text = str(file_info['size'])
+                                    
+                                    file_getlastmodified = ET.SubElement(file_prop, 'getlastmodified')
+                                    file_getlastmodified.text = datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT')
+                                    
+                                    file_getcontenttype = ET.SubElement(file_prop, 'getcontenttype')
+                                    file_getcontenttype.text = 'application/octet-stream'
+                                    
+                                    file_status = ET.SubElement(file_propstat, 'status')
+                                    file_status.text = 'HTTP/1.1 200 OK'
+                        
+                        # Send WebDAV XML response
+                        xml_response = ET.tostring(multistatus, encoding='utf-8', xml_declaration=True)
+                        
+                        self.send_response(207)  # Multi-Status
+                        self.send_header('Content-Type', 'text/xml; charset="utf-8"')
+                        self.send_header('Content-Length', str(len(xml_response)))
+                        self.end_headers()
+                        self.wfile.write(xml_response)
+                        
+                    except Exception as e:
+                        print(f"❌ PROPFIND error: {e}")
+                        self.send_error(500, str(e))
+                
                 def do_GET(self):
                     """Handle GET requests for file downloads and directory listings"""
                     try:
                         path = urllib.parse.unquote(self.path)
                         
-                        if path == '/' or path == '':
-                            # Root directory - list all files
+                        if path == '/' or path == '':                            # Root directory - provide HTML listing for browsers
                             self.send_response(200)
                             self.send_header('Content-type', 'text/html')
                             self.end_headers()
                             
-                            html = """
+                            # Get host and port info
+                            host = filesystem.core.directory  # Placeholder, we'll use a simpler approach
+                            
+                            html = f"""
                             <!DOCTYPE html>
                             <html>
-                            <head><title>Discord Storage SMB Share</title></head>
+                            <head><title>Discord Storage WebDAV Share</title></head>
                             <body>
-                            <h1>Discord Storage Files</h1>
+                            <h1>📁 Discord Storage Files</h1>
+                            <p>💡 This is a WebDAV share for network mapping</p>
                             <ul>
                             """
                             
@@ -662,6 +743,7 @@ class DiscordSMBServer:
                                 self.send_header('Content-type', 'application/octet-stream')
                                 self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
                                 self.send_header('Content-Length', str(os.path.getsize(cache_path)))
+                                self.send_header('Last-Modified', datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT'))
                                 self.end_headers()
                                 
                                 with open(cache_path, 'rb') as f:
@@ -674,58 +756,194 @@ class DiscordSMBServer:
                                 self.send_error(404, "File not found")
                                 
                     except Exception as e:
-                        print(f"❌ SMB Handler error: {e}")
+                        print(f"❌ GET Handler error: {e}")
                         self.send_error(500, str(e))
                 
                 def do_PUT(self):
                     """Handle PUT requests for file uploads"""
                     try:
-                        filename = urllib.parse.unquote(self.path.lstrip('/'))
+                        path = urllib.parse.unquote(self.path)
+                        filename = path.lstrip('/')
+                        
+                        if not filename:
+                            self.send_error(400, "No filename specified")
+                            return
+                        
                         content_length = int(self.headers.get('Content-Length', 0))
                         
                         if content_length > 0:
+                            print(f"📤 WebDAV: Uploading {filename} ({content_length} bytes)")
+                            
                             # Save uploaded file to temporary location
                             temp_dir = tempfile.mkdtemp()
                             temp_path = os.path.join(temp_dir, filename)
                             
-                            with open(temp_path, 'wb') as f:
-                                f.write(self.rfile.read(content_length))
-                            
-                            # Upload to Discord Storage
-                            success = filesystem.upload_file_from_cache(temp_path, filename)
-                            
-                            # Clean up
-                            shutil.rmtree(temp_dir)
-                            
-                            if success:
-                                self.send_response(201)
-                                self.end_headers()
-                                self.wfile.write(b'File uploaded successfully')
-                            else:
-                                self.send_error(500, "Upload failed")
+                            try:
+                                with open(temp_path, 'wb') as f:
+                                    remaining = content_length
+                                    while remaining > 0:
+                                        chunk_size = min(8192, remaining)
+                                        chunk = self.rfile.read(chunk_size)
+                                        if not chunk:
+                                            break
+                                        f.write(chunk)
+                                        remaining -= len(chunk)
+                                
+                                # Upload to Discord Storage
+                                success = filesystem.upload_file_from_cache(temp_path, filename)
+                                
+                                if success:
+                                    print(f"✅ WebDAV: Upload successful - {filename}")
+                                    self.send_response(201)  # Created
+                                    self.send_header('Content-Length', '0')
+                                    self.end_headers()
+                                else:
+                                    print(f"❌ WebDAV: Upload failed - {filename}")
+                                    self.send_error(500, "Upload to Discord failed")
+                                    
+                            finally:
+                                # Clean up temp directory
+                                try:
+                                    shutil.rmtree(temp_dir)
+                                except:
+                                    pass
                         else:
-                            self.send_error(400, "No content")
+                            # Empty file or directory creation attempt
+                            self.send_response(201)  # Created
+                            self.send_header('Content-Length', '0')
+                            self.end_headers()
                             
                     except Exception as e:
-                        print(f"❌ SMB Upload error: {e}")
+                        print(f"❌ WebDAV PUT error: {e}")
                         self.send_error(500, str(e))
+                
+                def do_HEAD(self):
+                    """Handle HEAD requests - like GET but only headers"""
+                    try:
+                        path = urllib.parse.unquote(self.path)
+                        
+                        if path == '/' or path == '':
+                            # Root directory
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'text/html')
+                            self.send_header('Content-Length', '1000')  # Approximate
+                            self.end_headers()
+                        else:
+                            # File HEAD request
+                            filename = path.lstrip('/')
+                            file_info = filesystem.get_file_info(filename)
+                            
+                            if file_info:
+                                self.send_response(200)
+                                self.send_header('Content-Type', 'application/octet-stream')
+                                self.send_header('Content-Length', str(file_info['size']))
+                                self.send_header('Last-Modified', datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT'))
+                                self.end_headers()
+                            else:
+                                self.send_error(404, "File not found")
+                                
+                    except Exception as e:
+                        print(f"❌ WebDAV HEAD error: {e}")
+                        self.send_error(500, str(e))
+                
+                def do_LOCK(self):
+                    """Handle LOCK requests - WebDAV locking (simplified)"""
+                    try:
+                        # Simple lock response - we'll allow all locks for now
+                        lock_token = f"urn:uuid:{hash(self.path + str(time.time())) % 1000000}"
+                        
+                        lock_response = f'''<?xml version="1.0" encoding="utf-8"?>
+<prop xmlns="DAV:">
+    <lockdiscovery>
+        <activelock>
+            <locktype><write/></locktype>
+            <lockscope><exclusive/></lockscope>
+            <depth>0</depth>
+            <owner>Discord Storage</owner>
+            <timeout>Second-3600</timeout>
+            <locktoken><href>{lock_token}</href></locktoken>
+        </activelock>
+    </lockdiscovery>
+</prop>'''
+                        
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'text/xml; charset="utf-8"')
+                        self.send_header('Lock-Token', f'<{lock_token}>')
+                        self.send_header('Content-Length', str(len(lock_response)))
+                        self.end_headers()
+                        self.wfile.write(lock_response.encode('utf-8'))
+                        
+                    except Exception as e:
+                        print(f"❌ WebDAV LOCK error: {e}")
+                        self.send_error(500, str(e))
+                
+                def do_UNLOCK(self):
+                    """Handle UNLOCK requests - WebDAV unlocking"""
+                    try:
+                        # Simple unlock response - always successful
+                        self.send_response(204)  # No Content
+                        self.send_header('Content-Length', '0')
+                        self.end_headers()
+                        
+                    except Exception as e:
+                        print(f"❌ WebDAV UNLOCK error: {e}")
+                        self.send_error(500, str(e))
+                
+                def do_PROPPATCH(self):
+                    """Handle PROPPATCH requests - property modification"""
+                    try:
+                        # Simple property patch response - claim success for basic properties
+                        proppatch_response = '''<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">
+    <response>
+        <href>{}</href>
+        <propstat>
+            <status>HTTP/1.1 200 OK</status>
+        </propstat>
+    </response>
+</multistatus>'''.format(self.path)
+                        
+                        self.send_response(207)  # Multi-Status
+                        self.send_header('Content-Type', 'text/xml; charset="utf-8"')
+                        self.send_header('Content-Length', str(len(proppatch_response)))
+                        self.end_headers()
+                        self.wfile.write(proppatch_response.encode('utf-8'))
+                        
+                    except Exception as e:
+                        print(f"❌ WebDAV PROPPATCH error: {e}")
+                        self.send_error(500, str(e))
+                
+                def do_MKCOL(self):
+                    """Handle MKCOL requests (create directory) - not supported"""
+                    self.send_error(405, "Directory creation not supported")
+                
+                def do_DELETE(self):
+                    """Handle DELETE requests - not supported for now"""
+                    self.send_error(405, "File deletion not supported")
                 
                 def log_message(self, format, *args):
                     """Override to reduce logging noise"""
-                    pass
+                    if self.path not in ['/', '/favicon.ico']:
+                        print(f"📡 WebDAV: {self.command} {self.path}")
             
-            # Create HTTP server
-            server = HTTPServer((self.host, self.port), DiscordFileHandler)
+            # Create HTTP server with WebDAV support
+            server = HTTPServer((self.host, self.port), WebDAVHandler)
             server.timeout = 1  # 1 second timeout for handle_request
+            server.server_name = self.host
+            server.server_port = self.port
+            
+            print(f"✅ WebDAV server ready for network mapping!")
+            print(f"🔗 Network path: \\\\{self.host}:{self.port}\\{self.share_name}")
+            print(f"🌐 Browser access: http://{self.host}:{self.port}")
             
             # Keep running until stopped
             while self.running:
                 server.handle_request()
                 
         except Exception as e:
-            print(f"❌ SMB server error: {e}")
+            print(f"❌ WebDAV server error: {e}")
             if "Permission denied" in str(e) or "WinError 10013" in str(e):
-                print("💡 Try using a different port (like 8445) or run as administrator")
+                print("💡 Try using a different port or run as administrator")
         finally:
             try:
                 server.server_close()
