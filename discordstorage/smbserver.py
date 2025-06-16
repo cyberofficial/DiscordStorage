@@ -754,6 +754,7 @@ class DiscordStorageUnifiedServer:
         print(f"   📁 SMB Server: {'✅ Available' if self.smb_enabled else '❌ Not Available'}")
     
     def start_servers(self, 
+                     web_enabled: bool = True,
                      web_host: str = '127.0.0.1', 
                      web_port: int = 8080,
                      smb_enabled: bool = True,
@@ -771,9 +772,8 @@ class DiscordStorageUnifiedServer:
         
         print("🚀 Starting Discord Storage Unified Server...")
         print("=" * 60)
-        
-        # Start Web Server
-        if self.web_enabled:
+          # Start Web Server
+        if self.web_enabled and web_enabled:
             try:
                 self.web_server = DiscordStorageWebServer(
                     self.core, self.config_path, web_host, web_port
@@ -909,6 +909,7 @@ def create_unified_server(token: str, channel_id: str) -> DiscordStorageUnifiedS
 
 
 def start_unified_server_standalone(token: str, channel_id: str, 
+                                   web_enabled: bool = True,
                                    web_host: str = '127.0.0.1', 
                                    web_port: int = 8080,
                                    smb_enabled: bool = True,
@@ -931,9 +932,9 @@ def start_unified_server_standalone(token: str, channel_id: str,
         time.sleep(1)
     
     print("✅ Discord connection established!")
-    
-    # Start all servers
+      # Start all servers
     unified_server.start_servers(
+        web_enabled=web_enabled,
         web_host=web_host, 
         web_port=web_port,
         smb_enabled=smb_enabled,

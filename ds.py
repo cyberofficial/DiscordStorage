@@ -713,11 +713,11 @@ def parseArgs(inp):
                         if smb_port == 445:
                             print("⚠️  Note: SMB port 445 requires administrator privileges")
                         print(f"🔧 Starting SMB server on \\\\{smb_host}:{smb_port}\\{share_name}...")
-                        
-                        # For SMB-only mode, we still use unified server but disable web
+                          # For SMB-only mode, we still use unified server but disable web
                         start_unified_server_standalone(
                             TOKEN_SECRET, str(ROOM_ID),
-                            web_host='127.0.0.1', web_port=8080,  # Web disabled
+                            web_enabled=False,  # Disable web server for SMB-only mode
+                            web_host='127.0.0.1', web_port=8080,
                             smb_enabled=True, smb_host=smb_host, smb_port=smb_port
                         )
                         
@@ -758,11 +758,11 @@ def parseArgs(inp):
                         print(f"   🌐 Web: http://{web_host}:{web_port}")
                         if smb_port == 445:
                             print(f"   📁 SMB: \\\\{smb_host}\\{share_name}")
-                        else:
-                            print(f"   📁 SMB: \\\\{smb_host}:{smb_port}\\{share_name}")
+                        else:                            print(f"   📁 SMB: \\\\{smb_host}:{smb_port}\\{share_name}")
                         
                         start_unified_server_standalone(
                             TOKEN_SECRET, str(ROOM_ID),
+                            web_enabled=True,  # Enable both web and SMB for unified mode
                             web_host=web_host, web_port=web_port,
                             smb_enabled=True, smb_host=smb_host, smb_port=smb_port
                         )
