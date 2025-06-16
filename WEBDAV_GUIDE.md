@@ -119,9 +119,47 @@ python ds.py -s
 | Browse files | PROPFIND | ✅ Supported |
 | Download files | GET | ✅ Supported |
 | Upload files | PUT | ✅ Supported |
-| Delete files | DELETE | ❌ Not implemented |
+| **Rename files** | **MOVE** | **✅ Supported** |
+| **Copy files** | **COPY** | **✅ Supported** |
+| **Delete files** | **DELETE** | **✅ Supported** |
 | Create folders | MKCOL | ❌ Not implemented |
-| Rename/Move | MOVE | ❌ Not implemented |
+| File locking | LOCK/UNLOCK | ✅ Supported |
+
+### 🔄 **File Management Features**
+
+#### **✅ Renaming Files**
+- **Right-click** a file in the mapped drive
+- **Select "Rename"** or press F2
+- **Type new name** and press Enter
+- File is automatically **re-uploaded to Discord** with new name
+- **Old file is deleted** from Discord Storage
+
+#### **✅ Copying Files**
+- **Ctrl+C** to copy a file
+- **Ctrl+V** to paste in the same or different location
+- **Creates duplicate** on Discord Storage with new name
+
+#### **✅ Deleting Files**
+- **Right-click** a file and select **"Delete"**
+- **Press Delete key** on selected file
+- **File is removed** from Discord Storage permanently
+
+#### **✅ File Upload (Drag & Drop)**
+- **Drag files** from local folders to mapped drive
+- **Copy files** using Ctrl+C/Ctrl+V
+- **Move files** between local and Discord Storage
+
+### 🎯 **Advanced WebDAV Operations**
+
+#### **File Locking**
+- Windows automatically **locks files** during operations
+- **Prevents conflicts** during upload/rename operations
+- **Automatic unlocking** when operation completes
+
+#### **Metadata Support**
+- **File sizes** displayed correctly
+- **Modification dates** preserved
+- **MIME types** for proper file handling
 
 ## 🎉 **Success!**
 
@@ -129,8 +167,22 @@ Once mapped, you can:
 - **Browse** Discord Storage files like any network drive
 - **Download** files by copying them locally
 - **Upload** files by copying them to the mapped drive
+- **✨ Rename** files using F2 or right-click menu
+- **✨ Copy** files using Ctrl+C/Ctrl+V
+- **✨ Delete** files using Delete key or right-click menu
+- **✨ Drag & drop** files for easy upload
 - **Access** from any application that supports network drives
 
 **Example mapped drive path:** `Z:\` (or whatever letter Windows assigns)
 
-Your Discord Storage is now accessible as a proper network drive! 🚀
+### 🚀 **Full File Management**
+Your Discord Storage now works like any regular network drive with **complete file management capabilities**:
+
+- **File Explorer integration** - Works with Windows File Explorer
+- **Application support** - Open files directly from mapped drive
+- **Context menu support** - Right-click operations work
+- **Keyboard shortcuts** - F2 (rename), Delete, Ctrl+C/V, etc.
+- **Drag & drop support** - Move files easily
+- **Real-time updates** - Changes reflect immediately
+
+Your Discord Storage is now a **fully functional network drive**! 🚀🎊

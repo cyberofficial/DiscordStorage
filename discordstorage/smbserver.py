@@ -514,6 +514,58 @@ class DiscordSMBFileSystem:
             self.reload_file_list()
         except Exception as e:
             print(f"❌ Error updating config: {e}")
+    
+    def delete_file(self, filename: str) -> bool:
+        """Delete a file from Discord Storage"""
+        try:
+            # Find the file in our cache
+            file_code = None
+            for code, info in self.files_cache.items():
+                if info[0] == filename:  # info[0] is the filename
+                    file_code = code
+                    break
+            
+            if not file_code:
+                print(f"❌ File not found in cache: {filename}")
+                return False
+            
+            print(f"🗑️  Deleting {filename} from Discord Storage...")
+            
+            # Remove from config file
+            try:
+                with open(self.config_path, 'r') as f:
+                    first_line = f.readline().strip()
+                    second_line = f.readline().strip()
+                
+                if second_line:
+                    files = json.loads(second_line)
+                    if file_code in files:
+                        del files[file_code]
+                        
+                        # Write updated config
+                        with open(self.config_path, 'w') as f:
+                            f.write(first_line + '\n')
+                            f.write(json.dumps(files))
+                        
+                        # Reload cache
+                        self.reload_file_list()
+                        
+                        print(f"✅ File {filename} deleted from Discord Storage")
+                        return True
+                    else:
+                        print(f"❌ File code {file_code} not found in config")
+                        return False
+                else:
+                    print(f"❌ No files in config")
+                    return False
+                    
+            except Exception as e:
+                print(f"❌ Error updating config during delete: {e}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Delete error: {e}")
+            return False
 
 
 class DiscordSMBServer:
@@ -913,13 +965,180 @@ class DiscordSMBServer:
                         print(f"❌ WebDAV PROPPATCH error: {e}")
                         self.send_error(500, str(e))
                 
+                def do_MOVE(self):
+                    """Handle MOVE requests - WebDAV file/folder renaming and moving"""
+                    try:
+                        source_path = urllib.parse.unquote(self.path)
+                        source_filename = source_path.lstrip('/')
+                        
+                        # Get destination from Destination header
+                        destination_header = self.headers.get('Destination', '')
+                        if not destination_header:
+                            self.send_error(400, "Missing Destination header")
+                            return
+                        
+                        # Parse destination URL
+                        from urllib.parse import urlparse
+                        dest_url = urlparse(destination_header)
+                        dest_path = urllib.parse.unquote(dest_url.path)
+                        dest_filename = dest_path.lstrip('/')
+                        
+                        if not source_filename or not dest_filename:
+                            self.send_error(400, "Invalid source or destination path")
+                            return
+                        
+                        print(f"🔄 WebDAV: Moving/Renaming '{source_filename}' to '{dest_filename}'")
+                        
+                        # Check if source file exists
+                        source_file_info = filesystem.get_file_info(source_filename)
+                        if not source_file_info:
+                            self.send_error(404, "Source file not found")
+                            return
+                        
+                        # Download source file to temporary location
+                        temp_dir = tempfile.mkdtemp()
+                        try:
+                            temp_source_path = filesystem.download_file_to_cache(
+                                source_file_info['file_info'], source_filename
+                            )
+                            
+                            # Create renamed file in temp directory
+                            temp_dest_path = os.path.join(temp_dir, dest_filename)
+                            shutil.copy2(temp_source_path, temp_dest_path)
+                            
+                            # Upload renamed file to Discord
+                            success = filesystem.upload_file_from_cache(temp_dest_path, dest_filename)
+                            
+                            if success:
+                                # Delete the old file from Discord Storage
+                                delete_success = filesystem.delete_file(source_filename)
+                                
+                                if delete_success:
+                                    print(f"✅ WebDAV: Successfully moved '{source_filename}' to '{dest_filename}'")
+                                    self.send_response(201)  # Created (new resource)
+                                    self.send_header('Content-Length', '0')
+                                    self.end_headers()
+                                else:
+                                    print(f"⚠️  WebDAV: Uploaded new file but failed to delete old file")
+                                    self.send_response(201)  # Still consider it success
+                                    self.send_header('Content-Length', '0') 
+                                    self.end_headers()
+                            else:
+                                print(f"❌ WebDAV: Failed to upload renamed file")
+                                self.send_error(500, "Failed to upload renamed file")
+                                
+                        finally:
+                            # Clean up temp directory
+                            try:
+                                shutil.rmtree(temp_dir)
+                            except:
+                                pass
+                                
+                    except Exception as e:
+                        print(f"❌ WebDAV MOVE error: {e}")
+                        self.send_error(500, str(e))
+                
+                def do_COPY(self):
+                    """Handle COPY requests - WebDAV file copying"""
+                    try:
+                        source_path = urllib.parse.unquote(self.path)
+                        source_filename = source_path.lstrip('/')
+                        
+                        # Get destination from Destination header
+                        destination_header = self.headers.get('Destination', '')
+                        if not destination_header:
+                            self.send_error(400, "Missing Destination header")
+                            return
+                        
+                        # Parse destination URL
+                        from urllib.parse import urlparse
+                        dest_url = urlparse(destination_header)
+                        dest_path = urllib.parse.unquote(dest_url.path)
+                        dest_filename = dest_path.lstrip('/')
+                        
+                        if not source_filename or not dest_filename:
+                            self.send_error(400, "Invalid source or destination path")
+                            return
+                        
+                        print(f"📋 WebDAV: Copying '{source_filename}' to '{dest_filename}'")
+                        
+                        # Check if source file exists
+                        source_file_info = filesystem.get_file_info(source_filename)
+                        if not source_file_info:
+                            self.send_error(404, "Source file not found")
+                            return
+                        
+                        # Download source file to temporary location
+                        temp_dir = tempfile.mkdtemp()
+                        try:
+                            temp_source_path = filesystem.download_file_to_cache(
+                                source_file_info['file_info'], source_filename
+                            )
+                            
+                            # Create copy in temp directory
+                            temp_dest_path = os.path.join(temp_dir, dest_filename)
+                            shutil.copy2(temp_source_path, temp_dest_path)
+                            
+                            # Upload copy to Discord
+                            success = filesystem.upload_file_from_cache(temp_dest_path, dest_filename)
+                            
+                            if success:
+                                print(f"✅ WebDAV: Successfully copied '{source_filename}' to '{dest_filename}'")
+                                self.send_response(201)  # Created
+                                self.send_header('Content-Length', '0')
+                                self.end_headers()
+                            else:
+                                print(f"❌ WebDAV: Failed to upload copied file")
+                                self.send_error(500, "Failed to upload copied file")
+                                
+                        finally:
+                            # Clean up temp directory
+                            try:
+                                shutil.rmtree(temp_dir)
+                            except:
+                                pass
+                                
+                    except Exception as e:
+                        print(f"❌ WebDAV COPY error: {e}")
+                        self.send_error(500, str(e))
+                
                 def do_MKCOL(self):
                     """Handle MKCOL requests (create directory) - not supported"""
                     self.send_error(405, "Directory creation not supported")
                 
                 def do_DELETE(self):
-                    """Handle DELETE requests - not supported for now"""
-                    self.send_error(405, "File deletion not supported")
+                    """Handle DELETE requests - WebDAV file deletion"""
+                    try:
+                        path = urllib.parse.unquote(self.path)
+                        filename = path.lstrip('/')
+                        
+                        if not filename:
+                            self.send_error(400, "No filename specified")
+                            return
+                        
+                        print(f"🗑️  WebDAV: Deleting '{filename}'")
+                        
+                        # Check if file exists
+                        file_info = filesystem.get_file_info(filename)
+                        if not file_info:
+                            self.send_error(404, "File not found")
+                            return
+                        
+                        # Delete the file
+                        success = filesystem.delete_file(filename)
+                        
+                        if success:
+                            print(f"✅ WebDAV: Successfully deleted '{filename}'")
+                            self.send_response(204)  # No Content
+                            self.send_header('Content-Length', '0')
+                            self.end_headers()
+                        else:
+                            print(f"❌ WebDAV: Failed to delete '{filename}'")
+                            self.send_error(500, "Failed to delete file")
+                            
+                    except Exception as e:
+                        print(f"❌ WebDAV DELETE error: {e}")
+                        self.send_error(500, str(e))
                 
                 def log_message(self, format, *args):
                     """Override to reduce logging noise"""
