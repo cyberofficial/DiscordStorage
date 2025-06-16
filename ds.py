@@ -33,12 +33,14 @@ def tellupload(line1,line2,cmd,code,client):
         print('[ERROR] File upload fail')
     else:
         jobject = json.loads(line2)
+        # flcode now includes: [filename, size, urls, hash_url, file_hash]
         jobject[code] = flcode
         f = open('config.discord','w')
         f.write(line1)
         f.write(json.dumps(jobject))
         f.close()
         print('[DONE] File upload complete')
+        print(f'[INFO] File hash: {flcode[4]}')
     client.logout()
 
 def GetHumanReadable(size,precision=2):
@@ -106,7 +108,14 @@ def parseArgs(inp):
                             f.write(json.dumps(jobject))
                             f.close()
                         else:
-                            print('name: ' + str(FILES[key][0]) + ' | code: ' + str(key) + ' | size: ' + GetHumanReadable(FILES[key][1]) +'')
+                            # Handle both old format [name, size, urls] and new format [name, size, urls, hash_url, hash]
+                            file_info = FILES[key]
+                            name = str(file_info[0])
+                            size = GetHumanReadable(file_info[1])
+                            hash_info = ""
+                            if len(file_info) >= 5:  # New format with hash
+                                hash_info = f" | hash: {file_info[4][:8]}..."
+                            print(f'name: {name} | code: {str(key)} | size: {size}{hash_info}')
                     print('\n')
                     break
             elif '-help' == el or '-h' == el:

@@ -48,12 +48,14 @@ class Core:
         except Exception as exc:
             print('[ERROR] ' + str(exc))
             return -1    #Downloads a file from the server.
-    #The list object in this format is needed: [filename,size,[DL URLs]]
+    #The list object in this format is needed: [filename,size,[DL URLs],hash_url,original_hash]
     #RUNS ON MAIN THREAD, ASYNC.
     async def async_download(self,inp):
             filename = inp[0]
             total_size = inp[1]
             urls = inp[2]
+            hash_url = inp[3] if len(inp) > 3 else None
+            original_hash = inp[4] if len(inp) > 4 else None
             total_chunks = len(urls)
             
             print(f"\n📥 Starting download: {filename}")
@@ -70,6 +72,28 @@ class Core:
             
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             os.makedirs(download_dir, exist_ok=True)
+            
+            # Download hash file first if available
+            downloaded_hash = None
+            if hash_url:
+                print("📥 Downloading hash file first...")
+                try:
+                    agent = {'User-Agent':'DiscordStorageBot (http://github.com/nigel/discordstorage)'}
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(hash_url, headers=agent) as r:
+                            if r.status == 200:
+                                hash_content = await r.read()
+                                downloaded_hash = hash_content.decode('utf-8').strip()
+                                print(f"✅ Expected file hash: {downloaded_hash}")
+                            else:
+                                print(f"⚠️  Failed to download hash file (HTTP {r.status})")
+                except Exception as e:
+                    print(f"⚠️  Failed to download hash file: {str(e)}")
+            elif original_hash:
+                downloaded_hash = original_hash
+                print(f"✅ Using stored hash: {downloaded_hash}")
+            else:
+                print("⚠️  No hash information available for verification")
             
             # Check if we're resuming a download
             resume_data = self.load_resume_data(progress_file)
@@ -193,15 +217,46 @@ class Core:
             print(f"⏱️  Total time: {total_time:.1f}s")
             print(f"🚀 Average speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps")
             print(f"📁 Saved to: downloads/{filename}")
+              # --- Verify file hash after download ---
+            print(f"🔎 Verifying file hash after download...")
+            import hashlib
+            md5 = hashlib.md5()
+            with open(output_file, "rb") as f_hash:
+                for chunk in iter(lambda: f_hash.read(8192), b""):
+                    md5.update(chunk)
+            actual_hash = md5.hexdigest()
             
-            # Clean up temporary files
+            if downloaded_hash:
+                if actual_hash == downloaded_hash:
+                    print(f"✅ File hash verification successful: {actual_hash}")
+                else:
+                    print(f"❌ [ERROR] File hash mismatch!")
+                    print(f"   Expected: {downloaded_hash}")
+                    print(f"   Actual:   {actual_hash}")
+                    print(f"⚠️  File may be corrupted or incomplete!")
+            else:
+                print(f"⚠️  No hash available for verification. Calculated hash: {actual_hash}")
+            # --- End hash verification ---
+              # Clean up temporary files
             self.cleanup_upload_dir(download_dir)
-            #files[code] = [name,size,[urls]]
-
-    #Uploads a file to the server from the root directory, or any other directory specified
+            #files[code] = [name,size,[urls]]    #Uploads a file to the server from the root directory, or any other directory specified
     #inp = directory, code = application-generated file code    #RUNS ON MAIN THREAD, ASYNC.
     async def async_upload(self,inp,code):
             urls = []
+            hash_url = None
+            # --- Calculate and save file hash before upload ---
+            import hashlib
+            hash_path = inp + ".hash"
+            print(f"🔎 Calculating file hash before upload...")
+            md5 = hashlib.md5()
+            with open(inp, "rb") as f_hash:
+                for chunk in iter(lambda: f_hash.read(8192), b""):
+                    md5.update(chunk)
+            file_md5 = md5.hexdigest()
+            with open(hash_path, "w") as f_hash_out:
+                f_hash_out.write(file_md5)
+            print(f"✅ File hash: {file_md5} (saved to {hash_path})")
+            # --- End hash calculation ---
             channel = self.session.getChannel()
             
             # Check if channel exists and is a messageable channel
@@ -229,13 +284,13 @@ class Core:
             file_hash = hashlib.md5(inp.encode()).hexdigest()[:8]
             upload_dir = os.path.join(self.directory, "uploading", f"{os.path.basename(inp)}_{file_hash}")
             progress_file = os.path.join(upload_dir, "progress.json")
-            
-            # Check if we're resuming an upload
+              # Check if we're resuming an upload
             resume_data = self.load_resume_data(progress_file)
             if resume_data:
                 print(f"🔄 Found previous upload progress: {resume_data['last_completed_chunk'] + 1}/{total_chunks} chunks completed")
                 print(f"📋 Resuming from chunk {resume_data['last_completed_chunk'] + 1}")
                 urls = resume_data['urls']
+                hash_url = resume_data.get('hash_url')
                 start_chunk = resume_data['last_completed_chunk'] + 1
                 # Use the existing upload code for consistency
                 if 'upload_code' in resume_data:
@@ -245,6 +300,35 @@ class Core:
                 print("📋 Pre-chunking file for reliable upload...")
                 self.pre_chunk_file(inp, upload_dir, chunk_size, total_chunks)
                 start_chunk = 0
+
+            # Upload hash file first if not already uploaded
+            if not hash_url:
+                print("📤 Uploading hash file...")
+                try:
+                    with open(hash_path, 'rb') as hash_file:
+                        hash_content = hash_file.read()
+                    
+                    o = io.BytesIO(hash_content)
+                    discord_file = discord.File(fp=o, filename=code + ".hash")
+                    await channel.send(file=discord_file)
+                      # Get the uploaded hash file URL
+                    async for message in channel.history(limit=1):
+                        if message.author == self.client.user:
+                            hash_url = message.attachments[0].url
+                            break
+                    
+                    print(f"✅ Hash file uploaded successfully")
+                    
+                    # Clean up local hash file after successful upload
+                    try:
+                        os.remove(hash_path)
+                        print(f"🧹 Cleaned up local hash file")
+                    except Exception as cleanup_error:
+                        print(f"⚠️  Could not clean up hash file: {str(cleanup_error)}")
+                        
+                except Exception as e:
+                    print(f"❌ Failed to upload hash file: {str(e)}")
+                    raise Exception("Hash file upload failed")
             
             start_time = time.time()
             uploaded_bytes = start_chunk * chunk_size
@@ -298,10 +382,10 @@ class Core:
                             try:
                                 await asyncio.sleep(delay)
                             except KeyboardInterrupt:
-                                print("\n❌ Upload cancelled by user")
-                                # Save progress before exiting
+                                print("\n❌ Upload cancelled by user")                                # Save progress before exiting
                                 self.save_resume_data(progress_file, {
                                     'urls': urls,
+                                    'hash_url': hash_url,
                                     'last_completed_chunk': i - 1,
                                     'file_size': file_size,
                                     'total_chunks': total_chunks,
@@ -326,10 +410,10 @@ class Core:
                     
                     if i < total_chunks - 1:  # Don't print separator after last chunk
                         print("   " + "█" * int(progress/2) + "░" * int(50-progress/2) + f" {uploaded_bytes}/{file_size} bytes")
-                    
-                    # Save progress after each successful chunk
+                      # Save progress after each successful chunk
                     self.save_resume_data(progress_file, {
                         'urls': urls,
+                        'hash_url': hash_url,
                         'last_completed_chunk': i,
                         'file_size': file_size,
                         'total_chunks': total_chunks,
@@ -345,11 +429,10 @@ class Core:
             print(f"⏱️  Total time: {total_time:.1f}s")
             print(f"🚀 Average speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps")
             print(f"📋 File code: {code}")
-            
-            # Clean up temporary files
+              # Clean up temporary files
             self.cleanup_upload_dir(upload_dir)
 
-            return [os.path.basename(inp),os.path.getsize(inp),urls]
+            return [os.path.basename(inp),os.path.getsize(inp),urls,hash_url,file_md5]
 
     #Finds out how many file blocks are needed to upload a file.
     #Regular max upload size at a time: 8MB.
