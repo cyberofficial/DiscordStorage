@@ -47,23 +47,156 @@ class Core:
             return future.result()
         except Exception as exc:
             print('[ERROR] ' + str(exc))
-            return -1
-
-    #Downloads a file from the server.
+            return -1    #Downloads a file from the server.
     #The list object in this format is needed: [filename,size,[DL URLs]]
     #RUNS ON MAIN THREAD, ASYNC.
     async def async_download(self,inp):
-            os.makedirs(os.path.dirname(self.directory + "downloads/" + inp[0]), exist_ok=True)
-            f = open(self.directory + "downloads/" + inp[0],'wb')
-            for i in range(0,len(inp[2])):
-                    #user agent is not in compliance with Discord API rules. Change accordingly if needed
-                    agent = {'User-Agent':'DiscordStorageBot (http://github.com/nigel/discordstorage)'}
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(inp[2][i],headers=agent) as r:
-                                if r.status == 200:
-                                        async for data in r.content.iter_any():
-                                                f.write(data)
-            f.close()            #files[code] = [name,size,[urls]]
+            filename = inp[0]
+            total_size = inp[1]
+            urls = inp[2]
+            total_chunks = len(urls)
+            
+            print(f"\n📥 Starting download: {filename}")
+            print(f"📊 File size: {self.GetHumanReadable(total_size)}")
+            print(f"🔢 Total chunks: {total_chunks}")
+            print("-" * 50)
+            
+            # Create download directory and progress tracking
+            import hashlib
+            file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
+            download_dir = os.path.join(self.directory, "downloading", f"{filename}_{file_hash}")
+            progress_file = os.path.join(download_dir, "progress.json")
+            output_file = os.path.join(self.directory, "downloads", filename)
+            
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            os.makedirs(download_dir, exist_ok=True)
+            
+            # Check if we're resuming a download
+            resume_data = self.load_resume_data(progress_file)
+            if resume_data and resume_data.get('completed_chunks'):
+                completed_chunks = set(resume_data['completed_chunks'])
+                print(f"🔄 Found previous download progress: {len(completed_chunks)}/{total_chunks} chunks completed")
+                print(f"📋 Resuming download...")
+            else:
+                completed_chunks = set()
+                print("📋 Starting fresh download...")
+            
+            start_time = time.time()
+            downloaded_bytes = len(completed_chunks) * 9000000  # Approximate chunk size
+            
+            # Create/open the output file
+            f = open(output_file, 'r+b' if completed_chunks else 'wb')
+            
+            for i in range(total_chunks):
+                    # Skip already completed chunks
+                    if i in completed_chunks:
+                        print(f"⏭️  Chunk {i+1}/{total_chunks} already downloaded, skipping...")
+                        continue
+                        
+                    chunk_start_time = time.time()
+                    chunk_size = 0
+                    
+                    # Retry mechanism with exponential backoff
+                    retry_count = 0
+                    retry_delays = [1, 5, 15, 30]  # 1s, 5s, 15s, then 30s forever
+                    download_successful = False
+                    
+                    while not download_successful:
+                        try:
+                            if retry_count == 0:
+                                print(f"⬇️  Downloading chunk {i+1}/{total_chunks}...", end=" ")
+                            else:
+                                print(f"🔄 Retry {retry_count} for chunk {i+1}/{total_chunks}...", end=" ")
+                            
+                            #user agent is not in compliance with Discord API rules. Change accordingly if needed
+                            agent = {'User-Agent':'DiscordStorageBot (http://github.com/nigel/discordstorage)'}
+                            
+                            # Download chunk to temporary location first
+                            chunk_data = bytearray()
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(urls[i], headers=agent) as r:
+                                        if r.status == 200:
+                                                async for data in r.content.iter_any():
+                                                        chunk_data.extend(data)
+                                                        chunk_size += len(data)
+                                        else:
+                                            raise Exception(f"HTTP {r.status}")
+                            
+                            # Write chunk to correct position in file
+                            f.seek(i * 9000000)  # Seek to chunk position
+                            f.write(chunk_data)
+                            f.flush()  # Ensure data is written
+                            
+                            downloaded_bytes += chunk_size
+                            completed_chunks.add(i)
+                            download_successful = True
+                            
+                        except Exception as e:
+                            retry_count += 1
+                            
+                            # Determine retry delay (1s, 5s, 15s, then stay at 30s)
+                            if retry_count <= len(retry_delays):
+                                delay = retry_delays[retry_count - 1]
+                            else:
+                                delay = retry_delays[-1]  # Stay at 30s
+                            
+                            print(f"❌ Failed: {str(e)}")
+                            print(f"⏱️  Waiting {delay}s before retry {retry_count}... (Press Ctrl+C to abort)")
+                            
+                            try:
+                                await asyncio.sleep(delay)
+                            except KeyboardInterrupt:
+                                f.close()
+                                print("\n❌ Download cancelled by user")
+                                # Save progress before exiting
+                                self.save_resume_data(progress_file, {
+                                    'completed_chunks': list(completed_chunks),
+                                    'total_chunks': total_chunks,
+                                    'file_size': total_size,
+                                    'filename': filename
+                                })
+                                raise Exception("Download cancelled by user")
+                    
+                    # Calculate and display progress (only after successful download)
+                    chunk_time = time.time() - chunk_start_time
+                    total_time = time.time() - start_time
+                    
+                    # Calculate speeds
+                    chunk_speed = chunk_size / chunk_time if chunk_time > 0 else 0
+                    avg_speed = downloaded_bytes / total_time if total_time > 0 else 0
+                    
+                    # Calculate progress percentage  
+                    progress = (len(completed_chunks) / total_chunks) * 100
+                    
+                    # Display progress
+                    print(f"✅ ({self.GetHumanReadable(chunk_size)}) ({chunk_speed * 8 / 1024 / 1024:.1f} Mbps)")
+                    print(f"📈 Progress: {progress:.1f}% | Avg Speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps | ETA: {self.calculate_eta((total_chunks - len(completed_chunks)) * 9000000, avg_speed)}")
+                    
+                    if i < total_chunks - 1:  # Don't print separator after last chunk
+                        print("   " + "█" * int(progress/2) + "░" * int(50-progress/2) + f" {len(completed_chunks)}/{total_chunks} chunks")
+                    
+                    # Save progress after each successful chunk
+                    self.save_resume_data(progress_file, {
+                        'completed_chunks': list(completed_chunks),
+                        'total_chunks': total_chunks,
+                        'file_size': total_size,
+                        'filename': filename
+                    })
+            
+            f.close()
+            
+            total_time = time.time() - start_time
+            avg_speed = total_size / total_time if total_time > 0 else 0
+            
+            print("-" * 50)
+            print(f"🎉 Download completed!")
+            print(f"⏱️  Total time: {total_time:.1f}s")
+            print(f"🚀 Average speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps")
+            print(f"📁 Saved to: downloads/{filename}")
+            
+            # Clean up temporary files
+            self.cleanup_upload_dir(download_dir)
+            #files[code] = [name,size,[urls]]
 
     #Uploads a file to the server from the root directory, or any other directory specified
     #inp = directory, code = application-generated file code    #RUNS ON MAIN THREAD, ASYNC.
