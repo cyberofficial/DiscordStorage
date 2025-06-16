@@ -1,2 +1,5 @@
 discord.py
 aiohttp
+pysmb
+cherrypy
+git+https://github.com/jborean93/smbprotocol.git

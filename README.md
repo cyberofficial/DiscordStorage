@@ -5,6 +5,7 @@ Transform Discord servers into your personal cloud storage! Upload, download, an
 ## ✨ Features
 
 - 🚀 **Upload/Download Files** - Store any file type on Discord servers
+- 🌐 **Web Server Interface** - Access your files through a web browser with built-in file manager
 - 🔄 **File Recovery** - Recover lost files using Discord URLs (even without config file!)
 - 🔐 **Hash Verification** - Ensure file integrity with MD5 hash checking
 - 📊 **Progress Tracking** - Real-time upload/download progress with speed monitoring
@@ -95,6 +96,14 @@ python ds.py -r FILE_ID HASH_URL CHUNK_URL1 [CHUNK_URL2] ...
 python ds.py -recover 3002 "https://cdn.discordapp.com/..." "https://cdn.discordapp.com/..."
 ```
 
+#### 🌐 **Web Server** (NEW!)
+Start a web server to access your Discord storage through a browser:
+```bash
+python ds.py -s
+python ds.py -smb
+python ds.py -samba
+```
+
 #### ❓ Help
 ```bash
 python ds.py -h
@@ -102,6 +111,15 @@ python ds.py -help
 ```
 
 ## 🔧 Advanced Features
+
+### Web Server Interface
+Access your Discord storage through a modern web browser:
+- **📱 Responsive Design** - Works on desktop, tablet, and mobile
+- **📤 Drag & Drop Upload** - Simply drag files to upload
+- **📥 One-Click Download** - Download files with a single click
+- **📊 Storage Statistics** - View file count and storage usage
+- **🔄 Real-time Updates** - Automatically refreshes file list
+- **🎨 Dark Theme** - Easy on the eyes with Discord-inspired design
 
 ### File Recovery System
 Lost your config file? No problem! The recovery system can:
@@ -160,6 +178,7 @@ This project is a fork and enhancement of the original [DiscordStorage](https://
 **Enhanced Fork**: https://github.com/cyberofficial/DiscordStorage
 
 ### Major Enhancements Added:
+- **Web Server Interface** - Access Discord storage through a modern web browser
 - File recovery system with URL-based restoration
 - Advanced hash verification and file integrity checks
 - Smart resume capabilities for interrupted transfers

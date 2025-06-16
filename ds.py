@@ -519,17 +519,18 @@ def recover_files(file_id, hash_url, *chunk_urls):
         return True  # Still consider it successful
 
 def parseArgs(inp):
-    commands = ['-h','-help','-l','-list','-d','-download','-u','-upload','-r','-recover']
+    commands = ['-h','-help','-l','-list','-d','-download','-u','-upload','-r','-recover','-s','-smb','-samba']
     if(len(inp) == 1):
-        print('----------------------\n|DiscordStorage v0.1 |')
-        print('|github.com/nigelchen|\n----------------------')
+        print('----------------------\n|DiscordStorage v2.0 |')
+        print('|Enhanced Fork       |\n----------------------')
         print('\nUsage: python ds.py [command] (target)\n')
         print('COMMANDS:')
         print('[-h, -help] :: Show the current message')
         print('[-l, -list] :: Lists all the file informations that has been uploaded to the server.')
         print('[-d, -download] (FILE CODE) :: Downloads a file from the server. A filecode is taken in as the file identifier.')
         print('[-u, -upload] (FILE DIRECTORY) :: Uploads a file to the server. The full file directory is taken in for the argument.')
-        print('[-r, -recover] (FILE ID) (HASH URL) (CHUNK URLs...) :: Recover a lost file from Discord URLs.\n')
+        print('[-r, -recover] (FILE ID) (HASH URL) (CHUNK URLs...) :: Recover a lost file from Discord URLs.')
+        print('[-s, -smb, -samba] :: Start unified server with web interface and/or SMB/CIFS network file sharing.\n')
     elif isConfigured():
         f = open('config.discord','r')
         first = f.readline()
@@ -579,15 +580,16 @@ def parseArgs(inp):
                     print('\n')
                     break
             elif '-help' == el or '-h' == el:
-                print('----------------------\n|DiscordStorage|')
-                print('|github.com/nigel|\n----------------------')
+                print('----------------------\n|DiscordStorage v2.0 |')
+                print('|Enhanced Fork       |\n----------------------')
                 print('\nUsage: python ds.py [command] (target)\n')
                 print('COMMANDS:')
                 print('[-h, -help] :: Show the current message')
                 print('[-l, -list] :: Lists all the file informations that has been uploaded to the server.')
                 print('[-d, -download] (FILE CODE) :: Downloads a file from the server. A filecode is taken in as the file identifier.')
                 print('[-u, -upload] (FILE DIRECTORY) :: Uploads a file to the server. The full file directory is taken in for the argument.')
-                print('[-r, -recover] (FILE ID) (HASH URL) (CHUNK URLs...) :: Recover a lost file from Discord URLs.\n')
+                print('[-r, -recover] (FILE ID) (HASH URL) (CHUNK URLs...) :: Recover a lost file from Discord URLs.')
+                print('[-s, -smb, -samba] :: Start unified server with web interface and/or SMB/CIFS network file sharing.\n')
             elif '-r' == el or '-recover' == el:
                 # Handle recovery command: ds.py -r <id> <hash_url> <chunk1> <chunk2> ...
                 try:
@@ -623,8 +625,7 @@ def parseArgs(inp):
                         if not chunk_url.startswith('http'):
                             print(f'\n[ERROR] Chunk URL {i+1} must be a valid HTTP URL\n')
                             break
-                    else:
-                        # All URLs are valid, proceed with recovery
+                    else:                        # All URLs are valid, proceed with recovery
                         print(f'\n🔄 Starting file recovery...')
                         if recover_files(file_id, hash_url, *chunk_urls):
                             print('\n✅ File recovery completed successfully!')
@@ -636,6 +637,150 @@ def parseArgs(inp):
                     print('\n[ERROR] Recovery command not found in arguments\n')
                 except Exception as e:
                     print(f'\n[ERROR] Recovery failed: {str(e)}\n')
+                break
+            elif '-s' == el or '-smb' == el or '-samba' == el:                # Handle unified server command
+                print("🚀 Starting Discord Storage Unified Server...")
+                print("🌐 This will provide both web and SMB/CIFS network file sharing!")
+                print("-" * 60)
+                
+                try:
+                    from discordstorage.smbserver import (
+                        start_web_server_standalone, 
+                        start_unified_server_standalone,
+                        SMB_AVAILABLE, 
+                        SMBPROTOCOL_AVAILABLE
+                    )
+                    
+                    # Check SMB availability
+                    smb_available = SMB_AVAILABLE or SMBPROTOCOL_AVAILABLE
+                    
+                    print("🔧 Server Options Available:")
+                    print("   🌐 Web Interface: ✅ Available")
+                    print(f"   📁 SMB/CIFS Share: {'✅ Available' if smb_available else '❌ Not Available'}")
+                    
+                    if not smb_available:
+                        print("\n⚠️  SMB libraries not found. Installing...")
+                        print("📦 Please run: pip install pysmb smbprotocol")
+                        
+                        # Ask user if they want to continue with web-only
+                        continue_web = input("\n🤔 Continue with web server only? (y/n): ").strip().lower()
+                        if continue_web not in ['y', 'yes']:
+                            print("❌ Server startup cancelled")
+                            break
+                    
+                    # Server type selection
+                    print("\n🎛️  Server Mode:")
+                    print("   1. 🌐 Web Server Only")
+                    if smb_available:
+                        print("   2. 📁 SMB Server Only")
+                        print("   3. 🚀 Unified Server (Web + SMB)")
+                    
+                    mode_choice = input(f"\n🔧 Select mode (1-{'3' if smb_available else '1'}): ").strip()
+                    
+                    if mode_choice == '1':
+                        # Web server only mode
+                        host = input("🌐 Enter web server host (default: 127.0.0.1): ").strip()
+                        if not host:
+                            host = '127.0.0.1'
+                        
+                        port_input = input("🔌 Enter web server port (default: 8080): ").strip()
+                        try:
+                            port = int(port_input) if port_input else 8080
+                        except ValueError:
+                            print("⚠️  Invalid port number, using default (8080)")
+                            port = 8080
+                        
+                        print(f"🔧 Starting web server on {host}:{port}...")
+                        start_web_server_standalone(TOKEN_SECRET, str(ROOM_ID), host, port)
+                    elif mode_choice == '2' and smb_available:
+                        # SMB server only mode
+                        print("📁 SMB Server Configuration:")
+                        smb_host = input("🌐 Enter SMB host (default: 0.0.0.0): ").strip()
+                        if not smb_host:
+                            smb_host = '0.0.0.0'
+                        
+                        smb_port_input = input("🔌 Enter SMB port (default: 8445, standard: 445): ").strip()
+                        try:
+                            smb_port = int(smb_port_input) if smb_port_input else 8445
+                        except ValueError:
+                            print("⚠️  Invalid SMB port, using default (8445)")
+                            smb_port = 8445
+                        
+                        share_name = input("📁 Enter share name (default: DiscordStorage): ").strip()
+                        if not share_name:
+                            share_name = 'DiscordStorage'
+                        
+                        if smb_port == 445:
+                            print("⚠️  Note: SMB port 445 requires administrator privileges")
+                        print(f"🔧 Starting SMB server on \\\\{smb_host}:{smb_port}\\{share_name}...")
+                        
+                        # For SMB-only mode, we still use unified server but disable web
+                        start_unified_server_standalone(
+                            TOKEN_SECRET, str(ROOM_ID),
+                            web_host='127.0.0.1', web_port=8080,  # Web disabled
+                            smb_enabled=True, smb_host=smb_host, smb_port=smb_port
+                        )
+                        
+                    elif mode_choice == '3' and smb_available:
+                        # Unified server mode
+                        print("🚀 Unified Server Configuration:")
+                        
+                        # Web server settings
+                        web_host = input("🌐 Web server host (default: 127.0.0.1): ").strip()
+                        if not web_host:
+                            web_host = '127.0.0.1'
+                        
+                        web_port_input = input("🔌 Web server port (default: 8080): ").strip()
+                        try:
+                            web_port = int(web_port_input) if web_port_input else 8080
+                        except ValueError:
+                            print("⚠️  Invalid web port, using default (8080)")
+                            web_port = 8080
+                          # SMB server settings
+                        smb_host = input("📁 SMB host (default: 0.0.0.0): ").strip()
+                        if not smb_host:
+                            smb_host = '0.0.0.0'
+                        
+                        smb_port_input = input("🔌 SMB port (default: 8445, standard: 445): ").strip()
+                        try:
+                            smb_port = int(smb_port_input) if smb_port_input else 8445
+                        except ValueError:
+                            print("⚠️  Invalid SMB port, using default (8445)")
+                            smb_port = 8445
+                        
+                        share_name = input("📁 Share name (default: DiscordStorage): ").strip()
+                        if not share_name:
+                            share_name = 'DiscordStorage'
+                        
+                        if smb_port == 445:
+                            print("⚠️  Note: SMB port 445 requires administrator privileges")
+                        print(f"🔧 Starting unified server...")
+                        print(f"   🌐 Web: http://{web_host}:{web_port}")
+                        if smb_port == 445:
+                            print(f"   📁 SMB: \\\\{smb_host}\\{share_name}")
+                        else:
+                            print(f"   📁 SMB: \\\\{smb_host}:{smb_port}\\{share_name}")
+                        
+                        start_unified_server_standalone(
+                            TOKEN_SECRET, str(ROOM_ID),
+                            web_host=web_host, web_port=web_port,
+                            smb_enabled=True, smb_host=smb_host, smb_port=smb_port
+                        )
+                    else:
+                        print("❌ Invalid selection or SMB not available")
+                        break
+                    
+                except ImportError as e:
+                    print("❌ Server dependencies not found!")
+                    print("📦 Please install required packages:")
+                    print("   pip install -r requirements.txt")
+                    print("🔧 Make sure you have: cherrypy, pysmb, smbprotocol")
+                    print(f"   Error details: {str(e)}")
+                except Exception as e:
+                    print(f"❌ Failed to start server: {str(e)}")
+                    print("💡 Make sure you have appropriate permissions and dependencies")
+                    if 'SMB' in str(e):
+                        print("   For SMB: Run as administrator (Windows) or with sudo (Linux)")
                 break
 
 if not isConfigured():

@@ -1,4 +1,4 @@
-import os,io,aiohttp,asyncio, discord, time
+import os,io,aiohttp,asyncio, discord, time, hashlib, json
 from typing import cast
 from .Session import Session
 
