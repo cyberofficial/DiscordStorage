@@ -205,3 +205,4 @@ config.discord
 file.exe
 libmagic.dll
 magic.mgc
+/web_cache
