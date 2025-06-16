@@ -66,21 +66,17 @@ class Core:
             f.close()            #files[code] = [name,size,[urls]]
 
     #Uploads a file to the server from the root directory, or any other directory specified
-    #inp = directory, code = application-generated file code
-    #RUNS ON MAIN THREAD, ASYNC.
+    #inp = directory, code = application-generated file code    #RUNS ON MAIN THREAD, ASYNC.
     async def async_upload(self,inp,code):
             urls = []
-            f = open(inp,'rb')
             channel = self.session.getChannel()
             
             # Check if channel exists and is a messageable channel
             if channel is None:
-                f.close()
                 raise Exception("Channel not found - check your channel ID configuration")
             
             # Check if it's a text channel or DM channel that supports messaging
             if not isinstance(channel, (discord.TextChannel, discord.DMChannel, discord.GroupChannel)):
-                f.close()
                 raise Exception("Channel must be a text channel, DM, or group channel for file uploads")
             
             # Calculate file info for progress tracking
@@ -94,14 +90,39 @@ class Core:
             print(f"📦 Chunk size: {self.GetHumanReadable(chunk_size)}")
             print("-" * 50)
             
-            start_time = time.time()
-            uploaded_bytes = 0
+            # Create uploading directory and pre-chunk the file
+            # Use file path hash for consistent resume identification
+            import hashlib
+            file_hash = hashlib.md5(inp.encode()).hexdigest()[:8]
+            upload_dir = os.path.join(self.directory, "uploading", f"{os.path.basename(inp)}_{file_hash}")
+            progress_file = os.path.join(upload_dir, "progress.json")
             
-            for i in range(0, total_chunks):
+            # Check if we're resuming an upload
+            resume_data = self.load_resume_data(progress_file)
+            if resume_data:
+                print(f"🔄 Found previous upload progress: {resume_data['last_completed_chunk'] + 1}/{total_chunks} chunks completed")
+                print(f"📋 Resuming from chunk {resume_data['last_completed_chunk'] + 1}")
+                urls = resume_data['urls']
+                start_chunk = resume_data['last_completed_chunk'] + 1
+                # Use the existing upload code for consistency
+                if 'upload_code' in resume_data:
+                    code = resume_data['upload_code']
+                    print(f"📋 Using existing upload code: {code}")
+            else:
+                print("📋 Pre-chunking file for reliable upload...")
+                self.pre_chunk_file(inp, upload_dir, chunk_size, total_chunks)
+                start_chunk = 0
+            
+            start_time = time.time()
+            uploaded_bytes = start_chunk * chunk_size
+            
+            for i in range(start_chunk, total_chunks):
                     chunk_start_time = time.time()
                     
-                    # Read chunk data
-                    chunk_data = f.read(chunk_size)
+                    # Read chunk data from pre-chunked file
+                    chunk_path = os.path.join(upload_dir, f"chunk_{i:03d}.bin")
+                    with open(chunk_path, 'rb') as chunk_file:
+                        chunk_data = chunk_file.read()
                     actual_chunk_size = len(chunk_data)
                     
                     # Retry mechanism with exponential backoff
@@ -120,8 +141,7 @@ class Core:
                             else:
                                 print(f"🔄 Retry {retry_count} for chunk {i+1}/{total_chunks}...", end=" ")
                             
-                            await channel.send(file=discord_file)
-                            
+                            await channel.send(file=discord_file)                            
                             # Get the uploaded file URL
                             async for message in channel.history(limit=None):
                                     if message.author == self.client.user:
@@ -129,12 +149,11 @@ class Core:
                                             break
                             
                             upload_successful = True
-                            print("✅", end="")
+                            # Success indicator will be shown in progress display
                             
                         except Exception as e:
                             retry_count += 1
-                            
-                            # Determine retry delay (1s, 5s, 15s, then stay at 30s)
+                              # Determine retry delay (1s, 5s, 15s, then stay at 30s)
                             if retry_count <= len(retry_delays):
                                 delay = retry_delays[retry_count - 1]
                             else:
@@ -146,8 +165,15 @@ class Core:
                             try:
                                 await asyncio.sleep(delay)
                             except KeyboardInterrupt:
-                                f.close()
                                 print("\n❌ Upload cancelled by user")
+                                # Save progress before exiting
+                                self.save_resume_data(progress_file, {
+                                    'urls': urls,
+                                    'last_completed_chunk': i - 1,
+                                    'file_size': file_size,
+                                    'total_chunks': total_chunks,
+                                    'upload_code': code
+                                })
                                 raise Exception("Upload cancelled by user")
                     
                     # Calculate and display progress (only after successful upload)
@@ -161,24 +187,34 @@ class Core:
                     
                     # Calculate progress percentage
                     progress = (uploaded_bytes / file_size) * 100
-                    
-                    # Display progress
-                    print(f"✅ ({chunk_speed/1024/1024:.1f} MB/s)")
-                    print(f"📈 Progress: {progress:.1f}% | Avg Speed: {avg_speed/1024/1024:.1f} MB/s | ETA: {self.calculate_eta(file_size - uploaded_bytes, avg_speed)}")
+                      # Display progress
+                    print(f"✅ ({chunk_speed * 8 / 1024 / 1024:.1f} Mbps)")
+                    print(f"📈 Progress: {progress:.1f}% | Avg Speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps | ETA: {self.calculate_eta(file_size - uploaded_bytes, avg_speed)}")
                     
                     if i < total_chunks - 1:  # Don't print separator after last chunk
                         print("   " + "█" * int(progress/2) + "░" * int(50-progress/2) + f" {uploaded_bytes}/{file_size} bytes")
+                    
+                    # Save progress after each successful chunk
+                    self.save_resume_data(progress_file, {
+                        'urls': urls,
+                        'last_completed_chunk': i,
+                        'file_size': file_size,
+                        'total_chunks': total_chunks,
+                        'upload_code': code
+                    })
             
-            f.close()
-            
+            # Upload completed successfully
             total_time = time.time() - start_time
             avg_speed = file_size / total_time if total_time > 0 else 0
             
             print("-" * 50)
             print(f"🎉 Upload completed!")
             print(f"⏱️  Total time: {total_time:.1f}s")
-            print(f"🚀 Average speed: {avg_speed/1024/1024:.1f} MB/s")
+            print(f"🚀 Average speed: {avg_speed * 8 / 1024 / 1024:.1f} Mbps")
             print(f"📋 File code: {code}")
+            
+            # Clean up temporary files
+            self.cleanup_upload_dir(upload_dir)
 
             return [os.path.basename(inp),os.path.getsize(inp),urls]
 
@@ -215,3 +251,54 @@ class Core:
             hours = eta_seconds // 3600
             minutes = (eta_seconds % 3600) // 60
             return f"{hours:.0f}h {minutes:.0f}m"
+    
+    # Pre-chunk the file into smaller pieces for resume capability
+    def pre_chunk_file(self, file_path, upload_dir, chunk_size, total_chunks):
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        print("📋 Creating chunks...", end=" ")
+        with open(file_path, 'rb') as f:
+            for i in range(total_chunks):
+                chunk_path = os.path.join(upload_dir, f"chunk_{i:03d}.bin")
+                if not os.path.exists(chunk_path):  # Skip if chunk already exists
+                    chunk_data = f.read(chunk_size)
+                    with open(chunk_path, 'wb') as chunk_file:
+                        chunk_file.write(chunk_data)
+                
+                # Show progress
+                if (i + 1) % 5 == 0 or i == total_chunks - 1:
+                    print(f"({i + 1}/{total_chunks})", end=" ")
+        
+        print("✅ Chunks created!")
+    
+    # Load resume data from progress file
+    def load_resume_data(self, progress_file):
+        if not os.path.exists(progress_file):
+            return None
+        
+        try:
+            import json
+            with open(progress_file, 'r') as f:
+                return json.load(f)
+        except:
+            return None
+    
+    # Save resume data to progress file
+    def save_resume_data(self, progress_file, data):
+        try:
+            import json
+            os.makedirs(os.path.dirname(progress_file), exist_ok=True)
+            with open(progress_file, 'w') as f:
+                json.dump(data, f)
+        except:
+            pass  # Don't fail upload if we can't save progress
+    
+    # Clean up upload directory after successful upload
+    def cleanup_upload_dir(self, upload_dir):
+        try:
+            import shutil
+            if os.path.exists(upload_dir):
+                shutil.rmtree(upload_dir)
+                print("🧹 Cleaned up temporary files")
+        except:
+            print("⚠️  Could not clean up temporary files (not critical)")
