@@ -1,4 +1,5 @@
 import os,io,aiohttp,asyncio, discord
+from typing import cast
 from .Session import Session
 
 class Core:
@@ -10,35 +11,42 @@ class Core:
 
     #check if the client is connected to discord servers
     def isready(self):
-        return not(self.session.getLoop() == None)
-
-    #starts conenction to discord servers. 
+        return not(self.session.getLoop() == None)    #starts conenction to discord servers. 
     #RUNS ON MAIN THREAD, ASYNC.
     def start(self):
         self.session.start()
 
     #Halts all connection to discord servers.
     def logout(self):
-         future = asyncio.run_coroutine_threadsafe(self.session.logout(), self.session.getLoop())
+         loop = self.session.getLoop()
+         if loop is not None:
+             future = asyncio.run_coroutine_threadsafe(self.session.logout(), loop)
     
     #runs the async_upload in a threadsafe way,
     #can be run from anything outisde of main thread.
     def upload(self,inp,code):
-         future = asyncio.run_coroutine_threadsafe(self.async_upload(inp,code), self.session.getLoop())
+         loop = self.session.getLoop()
+         if loop is None:
+             print('[ERROR] Discord session not ready')
+             return -1
+         future = asyncio.run_coroutine_threadsafe(self.async_upload(inp,code), loop)
          try:
             return future.result()
          except Exception as exc:
             print(exc)
             return -1
-         
-    #runs the async_download in a threadsafe way,
+       #runs the async_download in a threadsafe way,
     #can be run from an ything outside of main thread.
     def download(self,inp):
-        future = asyncio.run_coroutine_threadsafe(self.async_download(inp), self.session.getLoop())
+        loop = self.session.getLoop()
+        if loop is None:
+            print('[ERROR] Discord session not ready')
+            return -1
+        future = asyncio.run_coroutine_threadsafe(self.async_download(inp), loop)
         try:
             return future.result()
         except Exception as exc:
-            print('[ERROR] ' + exc)
+            print('[ERROR] ' + str(exc))
             return -1
 
     #Downloads a file from the server.
@@ -56,19 +64,29 @@ class Core:
                                         async for data in r.content.iter_any():
                                                 f.write(data)
             f.close()
-            #files[code] = [name,size,[urls]]
-
-    #Uploads a file to the server from the root directory, or any other directory specified
+            #files[code] = [name,size,[urls]]    #Uploads a file to the server from the root directory, or any other directory specified
     #inp = directory, code = application-generated file code
     #RUNS ON MAIN THREAD, ASYNC.
     async def async_upload(self,inp,code):
             urls = []
             f = open(inp,'rb')
+            channel = self.session.getChannel()
+            
+            # Check if channel exists and is a messageable channel
+            if channel is None:
+                f.close()
+                raise Exception("Channel not found - check your channel ID configuration")
+            
+            # Check if it's a text channel or DM channel that supports messaging
+            if not isinstance(channel, (discord.TextChannel, discord.DMChannel, discord.GroupChannel)):
+                f.close()
+                raise Exception("Channel must be a text channel, DM, or group channel for file uploads")
+            
             for i in range(0,self.splitFile(inp)):
-                    o = io.BytesIO(f.read(24000000))
+                    o = io.BytesIO(f.read(9000000))
                     discord_file = discord.File(fp=o,filename=code+"." + str(i))
-                    await self.session.getChannel().send(file=discord_file)
-                    async for message in self.session.getChannel().history(limit=None):
+                    await channel.send(file=discord_file)
+                    async for message in channel.history(limit=None):
                             if message.author == self.client.user:
                                     urls.append(message.attachments[0].url)
                                     break
@@ -79,9 +97,10 @@ class Core:
     #Finds out how many file blocks are needed to upload a file.
     #Regular max upload size at a time: 8MB.
     #Discord NITRO max upload size at a time: 50MB.
+    #Currently configured for 9MB chunks.
     #Change accordingly if needed.
     def splitFile(self,f):
-            if (os.path.getsize(f)/24000000) > 1:
-                    return int(os.path.getsize(f)/24000000) + 1
+            if (os.path.getsize(f)/9000000) > 1:
+                    return int(os.path.getsize(f)/9000000) + 1
             else:
                     return 1
