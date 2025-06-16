@@ -202,3 +202,6 @@ __marimo__/
 config.discord
 /.vscode
 /uploading
+file.exe
+libmagic.dll
+magic.mgc
